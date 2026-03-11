@@ -732,11 +732,11 @@ if st.session_state.page == "upload":
         if detected == "data":
             save_uploaded_file(auto_file, "data.xlsx")
             st.success(f"✅ **Detected as Data (Infra/Network)**  \nFile `{auto_file.name}` saved as data source.")
-            st.cache_data.clear()
+            st.caching.clear_cache()
         elif detected == "aps":
             save_uploaded_file(auto_file, "aps.xlsx")
             st.success(f"✅ **Detected as APS**  \nFile `{auto_file.name}` saved as APS source.")
-            st.cache_data.clear()
+            st.caching.clear_cache()
         else:
             st.warning(
                 f"⚠️ Could not auto-detect file type for `{auto_file.name}`.  \n"
@@ -758,7 +758,7 @@ if st.session_state.page == "upload":
         if data_file is not None:
             save_uploaded_file(data_file, "data.xlsx")
             st.success(f"✅ `{data_file.name}` saved as Data source.")
-            st.cache_data.clear()
+            st.caching.clear_cache()
 
     with man_col2:
         st.markdown("**APS**")
@@ -770,7 +770,7 @@ if st.session_state.page == "upload":
         if aps_file is not None:
             save_uploaded_file(aps_file, "aps.xlsx")
             st.success(f"✅ `{aps_file.name}` saved as APS source.")
-            st.cache_data.clear()
+            st.caching.clear_cache()
 
     st.markdown("---")
 
@@ -782,14 +782,14 @@ if st.session_state.page == "upload":
             p = os.path.join(UPLOAD_DIR, "data.xlsx")
             if os.path.exists(p):
                 os.remove(p)
-            st.cache_data.clear()
+            st.caching.clear_cache()
             st.success("Data source reset to default `data.xlsx`.")
     with r_col2:
         if st.button("Reset APS to default", key="reset_aps"):
             p = os.path.join(UPLOAD_DIR, "aps.xlsx")
             if os.path.exists(p):
                 os.remove(p)
-            st.cache_data.clear()
+            st.caching.clear_cache()
             st.success("APS source reset to default `aps.xlsx`.")
 
     st.stop()
@@ -921,25 +921,29 @@ keys = list(datasets.keys())
 # ──────────────────────────────────────────────
 # Build a chart figure
 # ──────────────────────────────────────────────
-def make_chart(info, height=200, font_size=9, show_legend=False):
-    data = info["data"].copy()
-    x_col = info["x"]
-    if len(data) == 0:
-        return None
-    # Keep rows with missing owners/CTI by labeling them instead of letting groupby drop NaN.
-    if x_col in data.columns:
-        data[x_col] = data[x_col].fillna("Unassigned")
-    if "CTI overdue" in data.columns:
-        data["CTI overdue"] = data["CTI overdue"].fillna("Unknown")
-    else:
-        return None
-    # Aggregate and limit to top N categories for large datasets
-    N = 20  # Show top 20 categories, group rest as 'Other'
-    grp = data.groupby([x_col, "CTI overdue"]).size().reset_index(name="Count")
-    # Get top N categories by total count
-    top_cats = grp.groupby(x_col)["Count"].sum().nlargest(N).index
+@st.cache(ttl=180, allow_output_mutation=True)
+def compute_chart_data(data, x_col, top_n=20):
+    """
+    Pre-aggregate heavy data so Plotly receives only the grouped counts.
+    Cached to avoid recomputing on every rerun/redraw.
+    """
+    if data is None or len(data) == 0:
+        return pd.DataFrame()
+    if x_col not in data.columns or "CTI overdue" not in data.columns:
+        return pd.DataFrame()
+    df = data.copy()
+    df[x_col] = df[x_col].fillna("Unassigned")
+    df["CTI overdue"] = df["CTI overdue"].fillna("Unknown")
+    grp = df.groupby([x_col, "CTI overdue"], observed=True).size().reset_index(name="Count")
+    top_cats = grp.groupby(x_col)["Count"].sum().nlargest(top_n).index
     grp[x_col] = grp[x_col].where(grp[x_col].isin(top_cats), other="Other")
-    grp = grp.groupby([x_col, "CTI overdue"]).sum().reset_index()
+    grp = grp.groupby([x_col, "CTI overdue"], observed=True).sum().reset_index()
+    return grp
+
+
+def make_chart(info, height=200, font_size=9, show_legend=False):
+    x_col = info["x"]
+    grp = compute_chart_data(info["data"], x_col, top_n=20)
     if grp.empty:
         return None
     # Remove text labels if too many bars
