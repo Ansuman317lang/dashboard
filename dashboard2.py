@@ -922,7 +922,7 @@ keys = list(datasets.keys())
 # Build a chart figure
 # ──────────────────────────────────────────────
 @st.cache(ttl=180, allow_output_mutation=True)
-def compute_chart_data(data, x_col, top_n=20):
+def compute_chart_data(data, x_col, top_n=None):
     """
     Pre-aggregate heavy data so Plotly receives only the grouped counts.
     Cached to avoid recomputing on every rerun/redraw.
@@ -935,24 +935,25 @@ def compute_chart_data(data, x_col, top_n=20):
     df[x_col] = df[x_col].fillna("Unassigned")
     df["CTI overdue"] = df["CTI overdue"].fillna("Unknown")
     grp = df.groupby([x_col, "CTI overdue"], observed=True).size().reset_index(name="Count")
-    top_cats = grp.groupby(x_col)["Count"].sum().nlargest(top_n).index
-    grp[x_col] = grp[x_col].where(grp[x_col].isin(top_cats), other="Other")
-    grp = grp.groupby([x_col, "CTI overdue"], observed=True).sum().reset_index()
+    if top_n:
+        top_cats = grp.groupby(x_col)["Count"].sum().nlargest(top_n).index
+        grp[x_col] = grp[x_col].where(grp[x_col].isin(top_cats), other="Other")
+        grp = grp.groupby([x_col, "CTI overdue"], observed=True).sum().reset_index()
     return grp
 
 
-def make_chart(info, height=200, font_size=9, show_legend=False):
+def make_chart(info, height=200, font_size=9, show_legend=False, top_n=None):
     x_col = info["x"]
-    grp = compute_chart_data(info["data"], x_col, top_n=20)
+    grp = compute_chart_data(info["data"], x_col, top_n=top_n)
     if grp.empty:
         return None
-    # Remove text labels if too many bars
-    show_text = grp[x_col].nunique() <= 30
+    # Only show labels when the category count is manageable
+    show_text = grp[x_col].nunique() <= 25
     fig = px.bar(
         grp, x=x_col, y="Count", color="CTI overdue",
         barmode="group",
         color_discrete_map={"Overdue SLA": "#87CEEB", "Within SLA": "#1B3A6B"},
-        text="Count" if show_text else None,
+        text=grp["Count"] if show_text else None,
     )
     y_max = grp["Count"].max()
     fig.update_layout(
@@ -967,12 +968,12 @@ def make_chart(info, height=200, font_size=9, show_legend=False):
                    gridcolor="rgba(0,0,0,0.08)"),
         bargap=0.35,
     )
+    fig.update_traces(hovertemplate="%{x}<br>%{y} items<extra></extra>")
     if show_text:
         fig.update_traces(
             textposition="outside",
             textfont=dict(size=max(font_size, 11), color="black", family="Arial Black"),
-            # Use y value directly to avoid literal "%{text}" rendering on older Plotly builds
-            texttemplate="<b>%{y}</b>",
+            texttemplate="%{text}",
             cliponaxis=False,
         )
     return fig
@@ -1349,7 +1350,7 @@ if selected is not None:
     # ── Single chart view ──
     info = datasets[selected]
     st.markdown(f"### {info['title']}  ({len(info['data'])} items)")
-    fig = make_chart(info, height=450, font_size=12, show_legend=True)
+    fig = make_chart(info, height=450, font_size=12, show_legend=True, top_n=None)
     if fig:
         st.plotly_chart(fig, width="stretch", key=f"single_{selected}")
     else:
@@ -1362,7 +1363,7 @@ else:
             info = datasets[keys[i]]
             st.markdown(f"<div style='text-align:center;font-weight:700;color:{info['color']};font-size:1.3rem;'>{len(info['data'])}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align:center;font-size:0.8rem;font-weight:600;color:#333;margin-bottom:0.2rem;'>{info['title']}</div>", unsafe_allow_html=True)
-            fig = make_chart(info)
+            fig = make_chart(info, top_n=20)
             if fig:
                 st.plotly_chart(fig, width="stretch", key=f"thumb_{keys[i]}")
             else:
@@ -1375,7 +1376,7 @@ else:
             info = datasets[keys[idx]]
             st.markdown(f"<div style='text-align:center;font-weight:700;color:{info['color']};font-size:1.3rem;'>{len(info['data'])}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align:center;font-size:0.8rem;font-weight:600;color:#333;margin-bottom:0.2rem;'>{info['title']}</div>", unsafe_allow_html=True)
-            fig = make_chart(info)
+            fig = make_chart(info, top_n=20)
             if fig:
                 st.plotly_chart(fig, width="stretch", key=f"thumb_{keys[idx]}")
             else:
