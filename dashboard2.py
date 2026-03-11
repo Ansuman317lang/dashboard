@@ -971,7 +971,8 @@ def make_chart(info, height=200, font_size=9, show_legend=False):
         fig.update_traces(
             textposition="outside",
             textfont=dict(size=max(font_size, 11), color="black", family="Arial Black"),
-            texttemplate="<b>%{text}</b>",
+            # Use y value directly to avoid literal "%{text}" rendering on older Plotly builds
+            texttemplate="<b>%{y}</b>",
             cliponaxis=False,
         )
     return fig
