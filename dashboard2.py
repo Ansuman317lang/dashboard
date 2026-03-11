@@ -4,9 +4,6 @@ import plotly.express as px
 import re
 import os
 import tempfile
-import io
-from pptx import Presentation
-from pptx.util import Inches
 from difflib import get_close_matches
 
 # ──────────────────────────────────────────────
@@ -925,9 +922,16 @@ keys = list(datasets.keys())
 # Build a chart figure
 # ──────────────────────────────────────────────
 def make_chart(info, height=200, font_size=9, show_legend=False):
-    data = info["data"]
+    data = info["data"].copy()
     x_col = info["x"]
     if len(data) == 0:
+        return None
+    # Keep rows with missing owners/CTI by labeling them instead of letting groupby drop NaN.
+    if x_col in data.columns:
+        data[x_col] = data[x_col].fillna("Unassigned")
+    if "CTI overdue" in data.columns:
+        data["CTI overdue"] = data["CTI overdue"].fillna("Unknown")
+    else:
         return None
     # Aggregate and limit to top N categories for large datasets
     N = 20  # Show top 20 categories, group rest as 'Other'
@@ -936,6 +940,8 @@ def make_chart(info, height=200, font_size=9, show_legend=False):
     top_cats = grp.groupby(x_col)["Count"].sum().nlargest(N).index
     grp[x_col] = grp[x_col].where(grp[x_col].isin(top_cats), other="Other")
     grp = grp.groupby([x_col, "CTI overdue"]).sum().reset_index()
+    if grp.empty:
+        return None
     # Remove text labels if too many bars
     show_text = grp[x_col].nunique() <= 30
     fig = px.bar(
@@ -1381,50 +1387,3 @@ st.markdown("""
     <span style="font-size:0.8rem;"> Within SLA</span>
 </div>
 """, unsafe_allow_html=True)
-
-# Function to create pptx from a list of (title, fig) tuples
-def create_pptx(figures):
-    prs = Presentation()
-    blank_slide_layout = prs.slide_layouts[6]  # blank
-    for title, fig in figures:
-        # Save plotly fig to PNG in memory
-        img_bytes = fig.to_image(format="png", width=900, height=500, scale=2)
-        img_stream = io.BytesIO(img_bytes)
-        slide = prs.slides.add_slide(blank_slide_layout)
-        # Add title
-        left = Inches(0.5)
-        top = Inches(0.2)
-        width = Inches(8)
-        height = Inches(0.7)
-        title_shape = slide.shapes.add_textbox(left, top, width, height)
-        title_shape.text = title
-        # Add image
-        slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1), Inches(8), Inches(4.5))
-    pptx_io = io.BytesIO()
-    prs.save(pptx_io)
-    pptx_io.seek(0)
-    return pptx_io
-
-# Example usage in Streamlit (put this in your main page where you want the button):
-if 'ppt_download' not in st.session_state:
-    st.session_state['ppt_download'] = False
-
-if st.button('Download All Graphs as PPTX'):
-    # Collect all figures you want to export (example: gallery view)
-    figures = []
-    for k in keys:
-        info = datasets[k]
-        fig = make_chart(info)
-        if fig:
-            figures.append((info['title'], fig))
-    pptx_io = create_pptx(figures)
-    st.session_state['ppt_download'] = pptx_io
-
-if st.session_state['ppt_download']:
-    st.download_button(
-        label='Click to Download PPTX',
-        data=st.session_state['ppt_download'],
-        file_name='dashboard_graphs.pptx',
-        mime='application/vnd.openxmlformats-officedocument.presentationml.presentation'
-    )
-    st.session_state['ppt_download'] = False
